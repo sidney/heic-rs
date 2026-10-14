@@ -77,6 +77,29 @@ impl<'a> Context<'a> {
         Ok(None)
     }
 
+    /// The ICC profile an item declares, resolved the same way as
+    /// [`declared_nclx`](Context::declared_nclx).
+    ///
+    /// `colr` carries either flavour, and a writer may choose the profile and
+    /// still put it only on the tiles: a OnePlus 11 photograph declares one
+    /// `prof` on each of its 48 tiles and nothing on the grid, with no `nclx`
+    /// anywhere in the file. Asking the grid alone loses the profile, and the
+    /// photograph is taken for sRGB.
+    pub fn declared_icc(&self, item: u32) -> Result<Option<&'a [u8]>> {
+        if let Some(own) = self.props(item)?.icc {
+            return Ok(Some(own));
+        }
+        let Some((_, tiles)) = self.grid(item)? else {
+            return Ok(None);
+        };
+        for tile in tiles {
+            if let Some(icc) = self.props(tile)?.icc {
+                return Ok(Some(icc));
+            }
+        }
+        Ok(None)
+    }
+
     /// The bytes of one item.
     pub fn item_data(&self, item: u32) -> Result<Cow<'a, [u8]>> {
         self.meta.item_data(self.file, item)

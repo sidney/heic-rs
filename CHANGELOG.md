@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `Context::declared_nclx`: what a file declares for an item -- its own `colr`, or its tiles'.
+- `Context::declared_icc`: the same resolution for the ICC flavour of `colr`, which `probe`'s
+  `has_icc` now reports.
 
 ## [0.1.4] - 2026-10-11
 

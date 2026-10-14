@@ -25,6 +25,11 @@ fn colr(primaries: u16, transfer: u16, matrix: u16, full: bool) -> Vec<u8> {
     )
 }
 
+/// A `colr` box carrying an ICC profile.
+fn prof(profile: &[u8]) -> Vec<u8> {
+    bx(b"colr", &cat(&[b"prof", profile]))
+}
+
 /// BT.2020 primaries, PQ transfer, BT.2020 non-constant matrix, full range:
 /// what a Canon HDR still declares.
 fn pq() -> Vec<u8> {
@@ -46,10 +51,15 @@ fn pq_expected() -> Option<Nclx> {
 /// declares `ispe` and nothing else; each tile declares `colr` when its entry
 /// says so.
 fn grid_over_two_tiles(tile_colr: [bool; 2]) -> Vec<u8> {
+    grid_over_two_tiles_declaring(&pq(), tile_colr)
+}
+
+/// [`grid_over_two_tiles`], with the `colr` each declaring tile carries.
+fn grid_over_two_tiles_declaring(declared: &[u8], tile_colr: [bool; 2]) -> Vec<u8> {
     let payload = grid_payload(1, 2, 4, 2);
     let mut ipco = vec![ispe(4, 2)];
     if tile_colr.iter().any(|declares| *declares) {
-        ipco.push(pq());
+        ipco.push(declared.to_vec());
     }
     let assoc = |declares: bool| {
         if declares {
@@ -120,4 +130,52 @@ fn a_coded_picture_without_colr_declares_nothing() {
     );
     let ctx = Context::open(&bytes).expect("opens");
     assert_eq!(ctx.declared_nclx(1).expect("resolves"), None);
+}
+
+#[test]
+fn a_grid_without_its_own_colr_inherits_the_tiles_profile() {
+    let bytes = grid_over_two_tiles_declaring(&prof(b"icc-bytes"), [true, true]);
+    let ctx = Context::open(&bytes).expect("opens");
+    assert!(ctx.props(1).expect("gathers").icc.is_none());
+    assert_eq!(
+        ctx.declared_icc(1).expect("resolves"),
+        Some(&b"icc-bytes"[..])
+    );
+}
+
+#[test]
+fn a_grid_whose_tiles_declare_no_profile_declares_none() {
+    let bytes = grid_over_two_tiles_declaring(&prof(b"icc-bytes"), [false, false]);
+    let ctx = Context::open(&bytes).expect("opens");
+    assert_eq!(ctx.declared_icc(1).expect("resolves"), None);
+}
+
+#[test]
+fn probe_reports_the_profile_a_grid_inherits() {
+    // `probe` needs the tile's `hvcC` for the chroma format and bit depth.
+    let payload = grid_payload(1, 1, 4, 2);
+    let bytes = file(
+        &[
+            pitm(1),
+            iinf(&[infe(1, b"grid", false), infe(2, b"hvc1", true)]),
+            iref(&[iref_entry(b"dimg", 1, &[2])]),
+            iprp_of(
+                &[ispe(4, 2), hvcc(1, 8, &[]), prof(b"icc-bytes")],
+                &[
+                    (1, vec![(1, true)]),
+                    (2, vec![(1, true), (2, true), (3, true)]),
+                ],
+            ),
+            bx(b"idat", &payload),
+            iloc(&[(1, 1, 0, payload.len() as u32), (2, 0, 0, 4)]),
+        ],
+        &[0; 4],
+    );
+    let ctx = Context::open(&bytes).expect("opens");
+    assert!(ctx.props(1).expect("gathers").icc.is_none());
+    assert_eq!(
+        ctx.declared_icc(1).expect("resolves"),
+        Some(&b"icc-bytes"[..])
+    );
+    assert!(heic_rs::probe(&bytes).expect("probes").has_icc);
 }
